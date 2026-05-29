@@ -1,0 +1,87 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                git branch: 'develop',
+                    url: 'https://github.com/JRobina/todo-list-aws.git'
+            }
+        }
+
+        stage('Static Test') {
+            steps {
+                sh '''
+                    flake8 --format=pylint src/ > flake8-report.txt || true
+                    bandit -r src/ -f json -o bandit-report.json || true
+                '''
+            }
+            post {
+                always {
+                    recordIssues tools: [flake8(pattern: 'flake8-report.txt')]
+                    recordIssues tools: [pyLint(pattern: 'bandit-report.json')]
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    sam build
+                    sam validate --region us-east-1
+                    sam deploy \
+                        --config-env staging \
+                        --no-confirm-changeset \
+                        --no-fail-on-empty-changeset
+                '''
+            }
+        }
+
+        stage('Rest Test') {
+            steps {
+                sh '''
+                    export BASE_URL=$(aws cloudformation describe-stacks \
+                        --stack-name staging-todo-list-aws \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --output text)
+
+                    pytest test/integration/todoApiTest.py -v \
+                        --junitxml=integration-results.xml
+                '''
+            }
+            post {
+                always {
+                    junit 'integration-results.xml'
+                }
+            }
+        }
+
+        stage('Promote') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'github-credentials',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN'
+                )]) {
+                    sh '''
+                        git config user.email "jenkins@ci.local"
+                        git config user.name  "Jenkins CI"
+                        git checkout master
+                        git merge develop --no-ff -m "CI promote: develop -> master"
+                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/JRobina/todo-list-aws.git master
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline CI completado. Version promovida a master."
+        }
+        failure {
+            echo "Pipeline CI fallido. Revisa los logs."
+        }
+    }
+}
