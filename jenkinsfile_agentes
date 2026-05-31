@@ -96,7 +96,7 @@ pipeline {
                         git push https://${GIT_USER}:${GIT_TOKEN}@github.com/JRobina/todo-list-aws.git master
                     '''
                 }
-                build job: 'todo-app-CD-agentes', wait: false
+               // build job: 'todo-app-CD-agentes', wait: false
             }
         }
     }
