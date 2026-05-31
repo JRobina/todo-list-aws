@@ -1,0 +1,99 @@
+pipeline {
+    agent { label 'built-in' }
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                git branch: 'develop',
+                    credentialsId: 'github-credentials',
+                    url: 'https://github.com/JRobina/todo-list-aws.git'
+                stash name: 'source-code', includes: '**/*'
+            }
+        }
+
+        stage('Static Test') {
+            agent { label 'static' }
+            steps {
+                unstash 'source-code'
+                sh '''
+                    flake8 --format=pylint src/ > flake8-report.txt || true
+                    bandit -r src/ -f json -o bandit-report.json || true
+                '''
+            }
+            post {
+                always {
+                    recordIssues tools: [flake8(pattern: 'flake8-report.txt')]
+                    recordIssues tools: [pyLint(pattern: 'bandit-report.json')]
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    sam build
+                    sam validate --region us-east-1
+                    sam deploy --config-env staging --no-confirm-changeset --no-fail-on-empty-changeset
+                '''
+                script {
+                    def BASE_URL = sh(
+                        script: '''
+                            aws cloudformation describe-stacks \
+                                --stack-name staging-todo-list-aws \
+                                --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                                --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
+                    writeFile file: 'base_url.txt', text: BASE_URL
+                    stash name: 'url-staging', includes: 'base_url.txt'
+                    echo "BASE_URL staging: ${BASE_URL}"
+                }
+            }
+        }
+
+        stage('Rest Test') {
+            agent { label 'rest' }
+            steps {
+                unstash 'source-code'
+                unstash 'url-staging'
+                sh '''
+                    BASE_URL=$(cat base_url.txt)
+                    echo "Ejecutando tests contra: $BASE_URL"
+                    BASE_URL=$BASE_URL pytest test/integration/todoApiTest.py -v --junitxml=integration-results.xml
+                '''
+            }
+            post {
+                always {
+                    junit 'integration-results.xml'
+                }
+            }
+        }
+
+        stage('Promote') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'github-credentials',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN'
+                )]) {
+                    sh '''
+                        git config user.email "jenkins@ci.local"
+                        git config user.name  "Jenkins CI"
+                        git checkout master
+                        git pull origin master --no-rebase
+                        git merge develop --no-ff -m "CI promote: develop -> master"
+                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/JRobina/todo-list-aws.git master
+                    '''
+                }
+                build job: 'todo-app-CD-agentes', wait: false
+            }
+        }
+    }
+
+    post {
+        success { echo "Pipeline CI completado. Version promovida a master." }
+        failure { echo "Pipeline CI fallido. Revisa los logs." }
+    }
+}
