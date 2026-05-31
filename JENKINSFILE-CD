@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                git branch: 'master',
+                    credentialsId: 'github-credentials',
+                    url: 'https://github.com/JRobina/todo-list-aws.git'
+                echo "Código descargado desde rama master"
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    sam build
+                    sam validate --region us-east-1
+                    sam deploy --config-env production
+                '''
+            }
+        }
+
+        stage('Rest Test') {
+            steps {
+                script {
+                    def BASE_URL = sh(
+                        script: '''
+                            aws cloudformation describe-stacks \
+                                --stack-name todo-list-aws-production \
+                                --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                                --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "URL de producción: ${BASE_URL}"
+
+                    sh """
+                        BASE_URL=${BASE_URL} pytest \
+                            -k "test_api_listtodos or test_api_gettodo" \
+                            test/integration/todoApiTest.py \
+                            -v
+                    """
+                }
+            }
+        }
+
+    }
+
+    post {
+        always {
+            echo "Pipeline CD finalizado — entorno: production"
+        }
+        success {
+            echo "Despliegue en producción completado ✅"
+        }
+        failure {
+            echo "Pipeline CD fallido ❌"
+        }
+    }
+}
