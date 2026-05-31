@@ -91,6 +91,7 @@ pipeline {
                         git config user.email "jenkins@ci.local"
                         git config user.name  "Jenkins CI"
                         git checkout master
+			git checkout -- samconfig.toml
                         git pull origin master --no-rebase
                         git merge develop --no-ff -m "CI promote: develop -> master"
                         git push https://${GIT_USER}:${GIT_TOKEN}@github.com/JRobina/todo-list-aws.git master
