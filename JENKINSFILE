@@ -71,9 +71,9 @@ pipeline {
                         git pull origin master
                         git merge develop --no-ff -m "CI promote: develop -> master"
                         git push https://${GIT_USER}:${GIT_TOKEN}@github.com/JRobina/todo-list-aws.git master
-                        build job: 'todo-app-CD', wait: false
                     '''
                 }
+                build job: 'todo-app-CD', wait: false
             }
         }
     }
