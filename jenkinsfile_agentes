@@ -3,14 +3,22 @@ pipeline {
 
     stages {
 
-        stage('Get Code') {
-            steps {
-                git branch: 'develop',
-                    credentialsId: 'github-credentials',
-                    url: 'https://github.com/JRobina/todo-list-aws.git'
-                stash name: 'source-code', includes: '**/*'
-            }
-        }
+       stage('Get Code') {
+    steps {
+        git branch: 'develop',
+            credentialsId: 'github-credentials',
+            url: 'https://github.com/JRobina/todo-list-aws.git'
+
+        sh '''
+            curl -o samconfig.toml \
+                https://raw.githubusercontent.com/JRobina/todo-list-aws-config/staging/samconfig.toml
+            echo "samconfig.toml descargado desde rama staging:"
+            cat samconfig.toml
+        '''
+
+        stash name: 'source-code', includes: '**/*'
+    }
+}
 
         stage('Static Test') {
             agent { label 'static' }
