@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                git branch: 'master',
+                    credentialsId: 'github-credentials',
+                    url: 'https://github.com/JRobina/todo-list-aws.git'
+                stash name: 'source-code', includes: '**/*'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    sam build
+                    sam validate --region us-east-1
+                    sam deploy --config-env production --no-confirm-changeset --no-fail-on-empty-changeset
+                '''
+                script {
+                    def BASE_URL = sh(
+                        script: '''
+                            aws cloudformation describe-stacks \
+                                --stack-name todo-list-aws-production \
+                                --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                                --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
+                    writeFile file: 'base_url.txt', text: BASE_URL
+                    stash name: 'url-production', includes: 'base_url.txt'
+                    echo "BASE_URL production: ${BASE_URL}"
+                }
+            }
+        }
+
+        stage('Rest Test') {
+            agent { label 'rest' }
+            steps {
+                unstash 'source-code'
+                unstash 'url-production'
+                sh '''
+                    BASE_URL=$(cat base_url.txt)
+                    echo "Ejecutando tests de solo lectura contra: $BASE_URL"
+                    BASE_URL=$BASE_URL pytest \
+                        -k "test_api_listtodos or test_api_gettodo" \
+                        test/integration/todoApiTest.py \
+                        -v
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "Despliegue en producción completado ✅" }
+        failure { echo "Pipeline CD fallido ❌" }
+    }
+}
