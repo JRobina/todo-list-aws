@@ -89,6 +89,7 @@ pipeline {
                     sh '''
                         git config user.email "jenkins@ci.local"
                         git config user.name  "Jenkins CI"
+                        git checkout -- samconfig.toml
                         git checkout master
                         git pull origin master --no-rebase
                         git merge develop --no-ff -m "CI promote: develop -> master"
